@@ -8,6 +8,8 @@ from urllib.request import urlopen
 
 from fastapi import FastAPI, WebSocket
 
+from app.tracking import TrackingSession
+
 NGROK_API_URL = os.getenv("NGROK_API_URL", "http://ngrok:4040/api/tunnels")
 LOCAL_URL = os.getenv("LOCAL_URL", "http://localhost:8000")
 NGROK_RETRY_SECONDS = 3
@@ -89,9 +91,44 @@ async def info() -> dict[str, str | None]:
 async def track(websocket: WebSocket) -> None:
     await websocket.accept()
     await websocket.send_json({"type": "status", "status": "idle"})
+    session = TrackingSession()
 
-    # Frame decoding and the OpenCV tracker lifecycle are added in the next step.
+    # Each WebSocket owns its frame and tracker, so clients never share state.
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
             return
+
+        if message.get("bytes") is not None:
+            # JPEG decoding and CSRT updates are CPU work; keep them off the event loop.
+            response = await asyncio.to_thread(
+                session.receive_frame,
+                message["bytes"],
+            )
+            if response is not None:
+                await websocket.send_json(response)
+            continue
+
+        text = message.get("text")
+        if text is None:
+            await websocket.send_json(
+                {"type": "error", "message": "Unsupported WebSocket message"}
+            )
+            continue
+
+        try:
+            command = json.loads(text)
+        except json.JSONDecodeError:
+            await websocket.send_json(
+                {"type": "error", "message": "Invalid JSON command"}
+            )
+            continue
+
+        if not isinstance(command, dict) or command.get("type") != "select":
+            await websocket.send_json(
+                {"type": "error", "message": "Unsupported command"}
+            )
+            continue
+
+        response = await asyncio.to_thread(session.select, command.get("bbox"))
+        await websocket.send_json(response)
