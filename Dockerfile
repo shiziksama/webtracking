@@ -9,15 +9,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM nginx:1.27-alpine AS frontend
-
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=frontend-build /app/dist /usr/share/nginx/html
-
-EXPOSE 80
-
-
-FROM python:3.11-slim AS backend
+FROM python:3.11-slim AS app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -32,6 +24,7 @@ COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
+COPY --from=frontend-build /app/dist ./static
 
 EXPOSE 8000
 

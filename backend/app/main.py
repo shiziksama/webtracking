@@ -3,16 +3,19 @@ import contextlib
 import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
 from fastapi import FastAPI, WebSocket
+from fastapi.staticfiles import StaticFiles
 
 from app.tracking import TrackingSession
 
 NGROK_API_URL = os.getenv("NGROK_API_URL", "http://ngrok:4040/api/tunnels")
 LOCAL_URL = os.getenv("LOCAL_URL", "http://localhost:8000")
 NGROK_RETRY_SECONDS = 3
+STATIC_DIR = Path(os.getenv("STATIC_DIR", "/app/static"))
 
 
 def fetch_ngrok_public_url() -> str | None:
@@ -59,11 +62,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Web Tracking API", lifespan=lifespan)
-
-
-@app.get("/")
-async def index() -> dict[str, str]:
-    return {"name": "Web Tracking API", "status": "online"}
 
 
 @app.get("/health")
@@ -132,3 +130,11 @@ async def track(websocket: WebSocket) -> None:
 
         response = await asyncio.to_thread(session.select, command.get("bbox"))
         await websocket.send_json(response)
+
+
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="frontend")
+else:
+    @app.get("/")
+    async def index() -> dict[str, str]:
+        return {"name": "Web Tracking API", "status": "online"}

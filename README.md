@@ -23,24 +23,19 @@ live video.
 - `idle`, `tracking`, and `lost` tracker states
 - Automatic ngrok URL discovery
 - Responsive browser interface
-- Fully Dockerized frontend, backend, and tunnel
+- Single application container plus the official ngrok container
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    Phone[Phone browser] -->|HTTPS| Ngrok[ngrok tunnel]
-    Ngrok --> Frontend[nginx + Vite frontend]
-    Frontend -->|/api/info| Backend[FastAPI backend]
-    Frontend <-->|JPEG frames / bbox updates| WebSocket[WebSocket /ws/track]
-    WebSocket <--> Backend
-    Backend --> Tracker[OpenCV CSRT tracker]
-    Backend -->|Discover public URL| NgrokAPI[ngrok API :4040]
-```
+The project uses two containers:
 
-The frontend and backend communicate over the private Docker network. nginx
-serves the static application and proxies `/api/*` and `/ws/*` to FastAPI.
-ngrok exposes nginx so camera access works from a phone over HTTPS.
+1. `app` builds the Vite frontend, runs FastAPI, serves the static UI, exposes
+   the HTTP API and WebSocket endpoint, and runs OpenCV tracking.
+2. `ngrok` creates the public HTTPS tunnel and exposes its agent API to the app
+   over the private Docker network.
+
+The browser talks to one origin for everything: the page, `/api/info`, and
+`/ws/track`. ngrok points directly to the application on port `8000`.
 
 ## Stack
 
@@ -50,7 +45,7 @@ ngrok exposes nginx so camera access works from a phone over HTTPS.
 | Backend | Python 3.11, FastAPI, Uvicorn |
 | Tracking | OpenCV contrib, NumPy, CSRT |
 | Transport | WebSocket with binary JPEG frames |
-| Infrastructure | Docker Compose, nginx, ngrok |
+| Infrastructure | Docker Compose, ngrok |
 
 ## Quick Start
 
@@ -82,9 +77,8 @@ docker compose up -d --build
 
 | Service | URL |
 | --- | --- |
-| Web application | http://localhost:3000 |
-| Backend API | http://localhost:8000 |
-| Backend health | http://localhost:8000/health |
+| Web application and API | http://localhost:8000 |
+| Health check | http://localhost:8000/health |
 | ngrok agent UI | http://localhost:4040 |
 
 The public URL is shown on the application page and in the ngrok agent UI.
@@ -96,7 +90,7 @@ object you want to track.
 The application can run without ngrok:
 
 ```bash
-docker compose up -d --build frontend backend
+docker compose up -d --build app
 ```
 
 Camera access works on `localhost` in desktop browsers. A phone normally needs
@@ -117,7 +111,7 @@ the ngrok HTTPS URL because browsers restrict camera access on insecure origins.
 Connect to:
 
 ```text
-ws://localhost:3000/ws/track
+ws://localhost:8000/ws/track
 ```
 
 Use `wss://` through the public ngrok URL.
@@ -165,7 +159,7 @@ Lost object:
 
 ### `GET /`
 
-Returns the backend name and status.
+Serves the built frontend application.
 
 ### `GET /health`
 
@@ -215,9 +209,8 @@ docker compose down
 │   ├── src/
 │   │   ├── main.ts          # Camera and WebSocket pipelines
 │   │   └── style.css
-│   ├── nginx.conf           # Static files and backend proxy
 │   └── package.json
-├── Dockerfile               # Frontend and backend build targets
+├── Dockerfile               # Vite build followed by one Python runtime image
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -226,7 +219,7 @@ docker compose down
 
 ### Port is already allocated
 
-Another service is using port `3000`, `8000`, or `4040`. Stop that service or
+Another service is using port `8000` or `4040`. Stop that service or
 change only the host side of the relevant Compose mapping, for example:
 
 ```yaml
@@ -253,7 +246,7 @@ docker compose logs ngrok
 - Select an area after the camera preview is visible.
 - Choose a textured object with clear contrast.
 - Avoid very small rectangles or rapid camera movement.
-- Inspect backend logs with `docker compose logs -f backend`.
+- Inspect application logs with `docker compose logs -f app`.
 
 ### Containers still use old code
 
