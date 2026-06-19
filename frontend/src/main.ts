@@ -183,6 +183,9 @@ function handleServerMessage(payload: ServerMessage): void {
   if (payload.type === 'bbox' && payload.bbox) {
     trackedBox = payload.bbox;
     setTrackerState('tracking');
+    if (payload.reacquired) {
+      message.textContent = 'Object found again. Tracking resumed.';
+    }
     return;
   }
 
@@ -194,6 +197,11 @@ function handleServerMessage(payload: ServerMessage): void {
   }
 
   if (payload.type === 'frame') {
+    if (payload.status === 'searching') {
+      trackedBox = null;
+      setTrackerState('searching');
+      message.textContent = 'Object is out of view. Searching...';
+    }
     return;
   }
 

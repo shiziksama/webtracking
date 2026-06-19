@@ -20,7 +20,8 @@ live video.
 - Touch and mouse rectangle selection
 - OpenCV CSRT object tracking
 - Real-time bounding boxes over WebSocket
-- `idle`, `tracking`, and `lost` tracker states
+- Automatic object reacquisition after short occlusions
+- `idle`, `tracking`, `searching`, and `lost` tracker states
 - Automatic ngrok URL discovery
 - Responsive browser interface
 - Single application container plus the official ngrok container
@@ -105,7 +106,10 @@ the ngrok HTTPS URL because browsers restrict camera access on insecure origins.
 4. The user selection is sent as a JSON `select` command.
 5. FastAPI creates an independent CSRT tracker for that WebSocket connection.
 6. OpenCV updates the tracker for every new frame.
-7. The returned bounding box is drawn on the visible canvas overlay.
+7. If CSRT drifts or loses the object, the original appearance template,
+   colour histogram, and local features validate subsequent frames at several
+   scales and automatically initialize a new tracker.
+8. The returned bounding box is drawn on the visible canvas overlay.
 
 ## WebSocket Protocol
 
@@ -157,12 +161,13 @@ Successful tracking update:
 }
 ```
 
-Lost object:
+Searching for an object that left the frame or was temporarily occluded:
 
 ```json
 {
-  "type": "lost",
-  "ok": false
+  "type": "frame",
+  "ok": true,
+  "status": "searching"
 }
 ```
 

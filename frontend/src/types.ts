@@ -1,4 +1,4 @@
-export type TrackerState = 'idle' | 'tracking' | 'lost';
+export type TrackerState = 'idle' | 'tracking' | 'searching' | 'lost';
 
 export interface BBox {
   x: number;
@@ -19,4 +19,5 @@ export interface ServerMessage {
   bbox?: BBox;
   message?: string;
   ok?: boolean;
+  reacquired?: boolean;
 }
