@@ -99,8 +99,9 @@ the ngrok HTTPS URL because browsers restrict camera access on insecure origins.
 ## How It Works
 
 1. The browser requests the rear camera when possible.
-2. A hidden canvas encodes a JPEG frame approximately five times per second.
-3. Binary JPEG data is sent to `/ws/track`.
+2. A hidden canvas encodes one JPEG frame at a time.
+3. Binary JPEG data is sent to `/ws/track`; the next frame is sent only after
+   the backend responds to the previous frame.
 4. The user selection is sent as a JSON `select` command.
 5. FastAPI creates an independent CSRT tracker for that WebSocket connection.
 6. OpenCV updates the tracker for every new frame.
@@ -128,6 +129,16 @@ message. Then send:
     "w": 100,
     "h": 50
   }
+}
+```
+
+Accepted frame before tracking starts:
+
+```json
+{
+  "type": "frame",
+  "ok": true,
+  "status": "idle"
 }
 ```
 

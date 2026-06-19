@@ -50,7 +50,7 @@ class TrackingSession:
 
         self.frame = frame
         if self.tracker is None:
-            return None
+            return {"type": "frame", "ok": True, "status": self.state}
 
         ok, bbox = self.tracker.update(frame)
         if not ok:

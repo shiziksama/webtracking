@@ -16,10 +16,11 @@ interface ApiInfo {
 }
 
 interface ServerMessage {
-  type: 'status' | 'bbox' | 'lost' | 'error';
+  type: 'status' | 'frame' | 'bbox' | 'lost' | 'error';
   status?: TrackerState;
   bbox?: BBox;
   message?: string;
+  ok?: boolean;
 }
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -94,7 +95,8 @@ const overlayContext = getCanvasContext(overlay);
 const frameContext = getCanvasContext(frameCanvas);
 
 let socket: WebSocket | null = null;
-let frameTimer: number | null = null;
+let framePipelineActive = false;
+let frameInFlight = false;
 let selectionStart: { x: number; y: number } | null = null;
 let selectionBox: BBox | null = null;
 let trackedBox: BBox | null = null;
@@ -183,12 +185,17 @@ function handleServerMessage(event: MessageEvent<string>): void {
     payload = JSON.parse(event.data) as ServerMessage;
   } catch {
     message.textContent = 'Backend sent an invalid response.';
+    sendNextFrame(frameInFlight);
     return;
   }
+
+  const isFrameResponse =
+    payload.type === 'frame' || payload.type === 'bbox' || payload.type === 'lost';
 
   if (payload.type === 'bbox' && payload.bbox) {
     trackedBox = payload.bbox;
     setTrackerState('tracking');
+    sendNextFrame(isFrameResponse);
     return;
   }
 
@@ -196,6 +203,12 @@ function handleServerMessage(event: MessageEvent<string>): void {
     trackedBox = null;
     setTrackerState('lost');
     message.textContent = 'Object lost. Drag a new rectangle to try again.';
+    sendNextFrame(isFrameResponse);
+    return;
+  }
+
+  if (payload.type === 'frame') {
+    sendNextFrame(isFrameResponse);
     return;
   }
 
@@ -208,6 +221,7 @@ function handleServerMessage(event: MessageEvent<string>): void {
 
   if (payload.type === 'error') {
     message.textContent = payload.message ?? 'Tracking error.';
+    sendNextFrame(frameInFlight);
   }
 }
 
@@ -248,22 +262,27 @@ function resizeCanvases(): void {
 
 function startFramePipeline(): void {
   stopFramePipeline();
+  framePipelineActive = true;
   void sendFrame();
-  frameTimer = window.setInterval(() => void sendFrame(), 200);
 }
 
 function stopFramePipeline(): void {
-  if (frameTimer !== null) {
-    window.clearInterval(frameTimer);
-    frameTimer = null;
-  }
+  framePipelineActive = false;
+  frameInFlight = false;
 }
 
 async function sendFrame(): Promise<void> {
-  if (!socket || socket.readyState !== WebSocket.OPEN || video.readyState < 2) {
+  if (
+    !framePipelineActive ||
+    frameInFlight ||
+    !socket ||
+    socket.readyState !== WebSocket.OPEN ||
+    video.readyState < 2
+  ) {
     return;
   }
 
+  frameInFlight = true;
   frameContext.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
   const jpeg = await new Promise<Blob | null>((resolve) =>
     frameCanvas.toBlob(resolve, 'image/jpeg', 0.72),
@@ -271,7 +290,22 @@ async function sendFrame(): Promise<void> {
 
   if (jpeg && socket.readyState === WebSocket.OPEN) {
     socket.send(jpeg);
+    return;
   }
+
+  frameInFlight = false;
+}
+
+function sendNextFrame(previousFrameCompleted = false): void {
+  if (previousFrameCompleted) {
+    frameInFlight = false;
+  }
+
+  if (!framePipelineActive) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => void sendFrame());
 }
 
 function stopCamera(): void {
