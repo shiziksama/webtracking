@@ -29,6 +29,10 @@ app.innerHTML = `
         <span>Tracker</span>
         <strong id="tracker-status" data-state="idle">Idle</strong>
       </article>
+      <article class="status-card">
+        <span>Throughput</span>
+        <strong id="fps-status" data-state="idle">0.0 FPS</strong>
+      </article>
     </section>
 
     <section class="camera-card">
@@ -66,6 +70,7 @@ const message = getElement<HTMLParagraphElement>('message');
 const backendStatus = getElement<HTMLElement>('backend-status');
 const ngrokStatus = getElement<HTMLElement>('ngrok-status');
 const trackerStatus = getElement<HTMLElement>('tracker-status');
+const fpsStatus = getElement<HTMLElement>('fps-status');
 const localUrl = getElement<HTMLElement>('local-url');
 const publicUrl = getElement<HTMLElement>('public-url');
 const websocketUrl = getElement<HTMLElement>('websocket-url');
@@ -75,15 +80,18 @@ let selectionStart: { x: number; y: number } | null = null;
 let selectionBox: BBox | null = null;
 let trackedBox: BBox | null = null;
 let trackerState: TrackerState = 'idle';
+let processedFrameTimes: number[] = [];
 const connection = new TrackingConnection({
   video,
   onMessage: handleServerMessage,
+  onFrameProcessed: recordProcessedFrame,
   onInvalidMessage: () => {
     message.textContent = 'Backend sent an invalid response.';
   },
   onClose: () => {
     message.textContent = 'Tracking connection closed.';
     setTrackerState('idle');
+    resetFps();
   },
 });
 
@@ -117,6 +125,35 @@ function setTrackerState(state: TrackerState): void {
   trackerStatus.textContent = state[0].toUpperCase() + state.slice(1);
   trackerStatus.dataset.state = state;
   drawOverlay();
+}
+
+function recordProcessedFrame(): void {
+  processedFrameTimes.push(performance.now());
+  updateFps();
+}
+
+function updateFps(): void {
+  const now = performance.now();
+  processedFrameTimes = processedFrameTimes.filter(
+    (timestamp) => timestamp >= now - 3000,
+  );
+
+  const measurementDuration =
+    processedFrameTimes.length > 1
+      ? processedFrameTimes.at(-1)! - processedFrameTimes[0]
+      : 0;
+  const fps =
+    measurementDuration > 0
+      ? ((processedFrameTimes.length - 1) * 1000) / measurementDuration
+      : 0;
+
+  fpsStatus.textContent = `${fps.toFixed(1)} FPS`;
+  fpsStatus.dataset.state = fps > 0 ? 'online' : 'idle';
+}
+
+function resetFps(): void {
+  processedFrameTimes = [];
+  updateFps();
 }
 
 async function loadApiInfo(): Promise<void> {
@@ -191,6 +228,7 @@ async function openCamera(): Promise<void> {
     cameraStage.classList.add('has-camera');
     overlay.classList.add('is-active');
     message.textContent = 'Drag a rectangle around an object.';
+    resetFps();
     connection.startFramePipeline();
   } catch (error) {
     stopCamera();
@@ -208,6 +246,7 @@ function resizeCanvases(): void {
 
 function stopCamera(): void {
   connection.stopFramePipeline();
+  resetFps();
   const stream = video.srcObject;
   if (stream instanceof MediaStream) {
     stream.getTracks().forEach((track) => track.stop());
@@ -297,3 +336,4 @@ window.addEventListener('beforeunload', stopCamera);
 
 void loadApiInfo();
 window.setInterval(() => void loadApiInfo(), 5000);
+window.setInterval(updateFps, 500);

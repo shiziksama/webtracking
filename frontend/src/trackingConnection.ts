@@ -3,6 +3,7 @@ import type { BBox, ServerMessage } from './types';
 interface TrackingConnectionOptions {
   video: HTMLVideoElement;
   onMessage: (payload: ServerMessage) => void;
+  onFrameProcessed: () => void;
   onInvalidMessage: () => void;
   onClose: () => void;
 }
@@ -19,6 +20,7 @@ function isFrameResponse(payload: ServerMessage): boolean {
 export class TrackingConnection {
   private readonly video: HTMLVideoElement;
   private readonly onMessage: (payload: ServerMessage) => void;
+  private readonly onFrameProcessed: () => void;
   private readonly onInvalidMessage: () => void;
   private readonly onClose: () => void;
   private readonly frameCanvas = document.createElement('canvas');
@@ -30,6 +32,7 @@ export class TrackingConnection {
   constructor(options: TrackingConnectionOptions) {
     this.video = options.video;
     this.onMessage = options.onMessage;
+    this.onFrameProcessed = options.onFrameProcessed;
     this.onInvalidMessage = options.onInvalidMessage;
     this.onClose = options.onClose;
 
@@ -101,6 +104,9 @@ export class TrackingConnection {
     }
 
     this.onMessage(payload);
+    if (isFrameResponse(payload)) {
+      this.onFrameProcessed();
+    }
     this.sendNextFrame(isFrameResponse(payload) || this.isFrameError(payload));
   }
 
