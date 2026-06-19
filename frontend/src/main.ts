@@ -1,27 +1,6 @@
 import './style.css';
-
-type TrackerState = 'idle' | 'tracking' | 'lost';
-
-interface BBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-interface ApiInfo {
-  local_url: string;
-  public_url: string | null;
-  websocket_url: string | null;
-}
-
-interface ServerMessage {
-  type: 'status' | 'frame' | 'bbox' | 'lost' | 'error';
-  status?: TrackerState;
-  bbox?: BBox;
-  message?: string;
-  ok?: boolean;
-}
+import { TrackingConnection } from './trackingConnection';
+import type { ApiInfo, BBox, ServerMessage, TrackerState } from './types';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -90,17 +69,23 @@ const trackerStatus = getElement<HTMLElement>('tracker-status');
 const localUrl = getElement<HTMLElement>('local-url');
 const publicUrl = getElement<HTMLElement>('public-url');
 const websocketUrl = getElement<HTMLElement>('websocket-url');
-const frameCanvas = document.createElement('canvas');
 const overlayContext = getCanvasContext(overlay);
-const frameContext = getCanvasContext(frameCanvas);
 
-let socket: WebSocket | null = null;
-let framePipelineActive = false;
-let frameInFlight = false;
 let selectionStart: { x: number; y: number } | null = null;
 let selectionBox: BBox | null = null;
 let trackedBox: BBox | null = null;
 let trackerState: TrackerState = 'idle';
+const connection = new TrackingConnection({
+  video,
+  onMessage: handleServerMessage,
+  onInvalidMessage: () => {
+    message.textContent = 'Backend sent an invalid response.';
+  },
+  onClose: () => {
+    message.textContent = 'Tracking connection closed.';
+    setTrackerState('idle');
+  },
+});
 
 function getElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -157,45 +142,10 @@ async function loadApiInfo(): Promise<void> {
   }
 }
 
-function currentWebSocketUrl(): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/track`;
-}
-
-function connectWebSocket(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    socket = new WebSocket(currentWebSocketUrl());
-
-    socket.addEventListener('open', () => resolve(), { once: true });
-    socket.addEventListener('error', () => reject(new Error('WebSocket failed')), {
-      once: true,
-    });
-    socket.addEventListener('message', handleServerMessage);
-    socket.addEventListener('close', () => {
-      stopFramePipeline();
-      message.textContent = 'Tracking connection closed.';
-      setTrackerState('idle');
-    });
-  });
-}
-
-function handleServerMessage(event: MessageEvent<string>): void {
-  let payload: ServerMessage;
-  try {
-    payload = JSON.parse(event.data) as ServerMessage;
-  } catch {
-    message.textContent = 'Backend sent an invalid response.';
-    sendNextFrame(frameInFlight);
-    return;
-  }
-
-  const isFrameResponse =
-    payload.type === 'frame' || payload.type === 'bbox' || payload.type === 'lost';
-
+function handleServerMessage(payload: ServerMessage): void {
   if (payload.type === 'bbox' && payload.bbox) {
     trackedBox = payload.bbox;
     setTrackerState('tracking');
-    sendNextFrame(isFrameResponse);
     return;
   }
 
@@ -203,12 +153,10 @@ function handleServerMessage(event: MessageEvent<string>): void {
     trackedBox = null;
     setTrackerState('lost');
     message.textContent = 'Object lost. Drag a new rectangle to try again.';
-    sendNextFrame(isFrameResponse);
     return;
   }
 
   if (payload.type === 'frame') {
-    sendNextFrame(isFrameResponse);
     return;
   }
 
@@ -221,7 +169,6 @@ function handleServerMessage(event: MessageEvent<string>): void {
 
   if (payload.type === 'error') {
     message.textContent = payload.message ?? 'Tracking error.';
-    sendNextFrame(frameInFlight);
   }
 }
 
@@ -238,13 +185,13 @@ async function openCamera(): Promise<void> {
     video.srcObject = stream;
     await video.play();
     resizeCanvases();
-    await connectWebSocket();
+    await connection.connect();
 
     placeholder.hidden = true;
     cameraStage.classList.add('has-camera');
     overlay.classList.add('is-active');
     message.textContent = 'Drag a rectangle around an object.';
-    startFramePipeline();
+    connection.startFramePipeline();
   } catch (error) {
     stopCamera();
     openCameraButton.disabled = false;
@@ -256,68 +203,18 @@ async function openCamera(): Promise<void> {
 function resizeCanvases(): void {
   overlay.width = video.videoWidth;
   overlay.height = video.videoHeight;
-  frameCanvas.width = video.videoWidth;
-  frameCanvas.height = video.videoHeight;
-}
-
-function startFramePipeline(): void {
-  stopFramePipeline();
-  framePipelineActive = true;
-  void sendFrame();
-}
-
-function stopFramePipeline(): void {
-  framePipelineActive = false;
-  frameInFlight = false;
-}
-
-async function sendFrame(): Promise<void> {
-  if (
-    !framePipelineActive ||
-    frameInFlight ||
-    !socket ||
-    socket.readyState !== WebSocket.OPEN ||
-    video.readyState < 2
-  ) {
-    return;
-  }
-
-  frameInFlight = true;
-  frameContext.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
-  const jpeg = await new Promise<Blob | null>((resolve) =>
-    frameCanvas.toBlob(resolve, 'image/jpeg', 0.72),
-  );
-
-  if (jpeg && socket.readyState === WebSocket.OPEN) {
-    socket.send(jpeg);
-    return;
-  }
-
-  frameInFlight = false;
-}
-
-function sendNextFrame(previousFrameCompleted = false): void {
-  if (previousFrameCompleted) {
-    frameInFlight = false;
-  }
-
-  if (!framePipelineActive) {
-    return;
-  }
-
-  window.requestAnimationFrame(() => void sendFrame());
+  connection.resizeFrameCanvas();
 }
 
 function stopCamera(): void {
-  stopFramePipeline();
+  connection.stopFramePipeline();
   const stream = video.srcObject;
   if (stream instanceof MediaStream) {
     stream.getTracks().forEach((track) => track.stop());
   }
   video.srcObject = null;
   cameraStage.classList.remove('has-camera');
-  socket?.close();
-  socket = null;
+  connection.close();
 }
 
 function pointerPosition(event: PointerEvent): { x: number; y: number } {
@@ -355,7 +252,7 @@ function drawOverlay(): void {
 }
 
 overlay.addEventListener('pointerdown', (event) => {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
+  if (!connection.isOpen) {
     return;
   }
   overlay.setPointerCapture(event.pointerId);
@@ -374,7 +271,7 @@ overlay.addEventListener('pointermove', (event) => {
 });
 
 overlay.addEventListener('pointerup', (event) => {
-  if (!selectionStart || !selectionBox || !socket) {
+  if (!selectionStart || !selectionBox || !connection.isOpen) {
     return;
   }
 
@@ -390,7 +287,7 @@ overlay.addEventListener('pointerup', (event) => {
   }
 
   trackedBox = bbox;
-  socket.send(JSON.stringify({ type: 'select', bbox }));
+  connection.sendSelect(bbox);
   message.textContent = 'Initializing tracker...';
   drawOverlay();
 });
