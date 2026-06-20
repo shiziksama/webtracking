@@ -14,6 +14,8 @@ object. The browser streams JPEG frames over a WebSocket, the backend tracks
 the selected object, and the frontend draws the returned bounding box over the
 live video.
 
+https://github.com/user-attachments/assets/afb50923-a9a7-4463-be0f-3e7100a91a5f
+
 ## Features
 
 - Mobile camera access through `getUserMedia()`
